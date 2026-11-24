@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Cosmic Bioluminescent Jellyfish</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #000000;
+    overflow: hidden;
+  }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+  const TARGET_FPS = 60;
+  const CYCLE_DURATION = 26.0;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x000308, 0.016);
+
+  let width = window.innerWidth;
+  let height = window.innerHeight;
+
+  const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 600);
+  camera.position.set(0, 1.5, 16.5);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(width, height, false);
+  document.body.appendChild(renderer.domElement);
+
+  function handleResize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height, false);
+  }
+  window.addEventListener('resize', handleResize);
+
+  const jellyGroup = new THREE.Group();
+  jellyGroup.rotation.z = -0.18;
+  jellyGroup.scale.set(0.68, 0.68, 0.68);
+  scene.add(jellyGroup);
+
+  let seed = 8821;
+  function rand() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  }
+
+  function smootherstep(x) {
+    const t = Math.min(Math.max(x, 0), 1);
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  const colCyan = new THREE.Color(0x00e5ff);
+  const colMagenta = new THREE.Color(0xff2a6d);
+  const colGold = new THREE.Color(0xffd166);
+  const colWhite = new THREE.Color(0xffffff);
+
+  // --- 1. Translucent Glowing Bell Membrane ---
+  const membraneGeo = new THREE.SphereGeometry(1, 96, 64, 0, Math.PI * 2, 0.04, 1.48);
+  const membraneMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uBloom: { value: 1 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+      varying float vU;
+
+      void main() {
+        vUv = uv;
+        float u = 1.0 - uv.y;
+        vU = u;
+        float theta = uv.x * 6.2831853;
+
+        float swimPhase = uTime * 1.65;
+        float pulse = sin(swimPhase - u * 1.55) + 0.32 * sin(swimPhase * 2.0 - u * 2.3);
+
+        float baseR = sin(u * 1.52) * 4.35;
+        float contract = 1.0 + pulse * (0.18 * u + 0.03);
+        float scallop = 1.0 + 0.06 * cos(theta * 16.0) * pow(u, 2.2);
+        float r = baseR * contract * scallop * uBloom;
+
+        float domeY = cos(u * 1.48) * 3.55 - 0.65;
+        float y = (domeY - pulse * 0.32 * (1.0 - u)) * uBloom + 2.2;
+
+        vec3 displaced = vec3(cos(theta) * r, y, sin(theta) * r);
+        vec4 mvPos = modelViewMatrix * vec4(displaced, 1.0);
+        
+        vec3 rawNorm = vec3(cos(theta) * sin(u * 1.52), cos(u * 1.48), sin(theta) * sin(u * 1.52));
+        vNormal = normalize(normalMatrix * normalize(rawNorm));
+        vViewDir = normalize(-mvPos.xyz);
+
+        gl_Position = projectionMatrix * mvPos;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+      varying float vU;
+
+      void main() {
+        float theta = vUv.x * 6.2831853;
+        float ndotv = abs(dot(normalize(vNormal), normalize(vViewDir)));
+        float fresnel = pow(1.0 - ndotv, 2.6);
+
+        float energyWave = pow(0.5 + 0.5 * sin(uTime * 2.6 - vU * 7.5), 3.0);
+        float canalGlow = pow(0.5 + 0.5 * cos(theta * 16.0), 8.0);
+
+        vec3 crownGold = vec3(1.0, 0.86, 0.48);
+        vec3 bodyCyan = vec3(0.0, 0.85, 1.0);
+        vec3 rimPink = vec3(1.0, 0.16, 0.46);
+
+        vec3 col = mix(crownGold, bodyCyan, smoothstep(0.05, 0.58, vU));
+        col = mix(col, rimPink, smoothstep(0.68, 1.0, vU));
+        col += vec3(0.55, 0.92, 1.0) * energyWave * 0.38;
+        col += vec3(1.0, 0.96, 0.85) * canalGlow * 0.22;
+
+        float apexFade = smoothstep(0.0, 0.09, vU);
+        float alpha = (0.07 + fresnel * 0.38 + energyWave * 0.14 + canalGlow * 0.12) * apexFade * uBloom;
+        if (alpha <= 0.002) discard;
+
+        gl_FragColor = vec4(col, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide
+  });
+
+  const membraneMesh = new THREE.Mesh(membraneGeo, membraneMat);
+  jellyGroup.add(membraneMesh);
+
+  // --- 2. Bioluminescent Jellyfish Bell Particle Ribs ---
+  const bellRings = 48;
+  const bellSegments = 96;
+  const bellCount = bellRings * bellSegments;
+
+  const bellPos = new Float32Array(bellCount * 3);
+  const bellCol = new Float32Array(bellCount * 3);
+  const bellMeta = new Float32Array(bellCount * 3);
+
+  let ptr = 0;
+  for (let rIdx = 0; rIdx < bellRings; rIdx++) {
+    const u = 0.045 + (rIdx / (bellRings - 1)) * 0.955;
+    for (let sIdx = 0; sIdx < bellSegments; sIdx++) {
+      const i3 = ptr * 3;
+      const theta = (sIdx / bellSegments) * Math.PI * 2;
+
+      let c;
+      if (u < 0.32) c = colWhite.clone().lerp(colGold, u / 0.32);
+      else if (u < 0.78) c = colGold.clone().lerp(colCyan, (u - 0.32) / 0.46);
+      else c = colCyan.clone().lerp(colMagenta, (u - 0.78) / 0.22);
+
+      const ribStrength = Math.pow(0.5 + 0.5 * Math.cos(theta * 16.0), 4.0);
+      c.lerp(colWhite, ribStrength * 0.45);
+
+      bellCol[i3] = c.r;
+      bellCol[i3 + 1] = c.g;
+      bellCol[i3 + 2] = c.b;
+
+      bellMeta[i3] = u;
+      bellMeta[i3 + 1] = theta;
+      bellMeta[i3 + 2] = ribStrength;
+      ptr++;
+    }
+  }
+
+  const bellGeo = new THREE.BufferGeometry();
+  bellGeo.setAttribute('position', new THREE.BufferAttribute(bellPos, 3));
+  bellGeo.setAttribute('aColor', new THREE.BufferAttribute(bellCol, 3));
+  bellGeo.setAttribute('aMeta', new THREE.BufferAttribute(bellMeta, 3));
+
+  const bellMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uBloom: { value: 1 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      attribute vec3 aColor;
+      attribute vec3 aMeta;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float u = aMeta.x;
+        float theta = aMeta.y;
+        float rib = aMeta.z;
+
+        float swimPhase = uTime * 1.65;
+        float pulse = sin(swimPhase - u * 1.55) + 0.32 * sin(swimPhase * 2.0 - u * 2.3);
+
+        float baseR = sin(u * 1.52) * 4.40;
+        float contract = 1.0 + pulse * (0.18 * u + 0.03);
+        float scallop = 1.0 + 0.06 * cos(theta * 16.0) * pow(u, 2.2);
+        float r = baseR * contract * scallop * uBloom;
+
+        float domeY = cos(u * 1.48) * 3.58 - 0.65;
+        float y = (domeY - pulse * 0.32 * (1.0 - u)) * uBloom;
+
+        vec3 pos = vec3(cos(theta) * r, y + 2.2, sin(theta) * r);
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float dist = max(-mvPosition.z, 1.0);
+        float energyWave = pow(0.5 + 0.5 * sin(uTime * 2.6 - u * 7.5), 3.0);
+        float crownScale = smoothstep(0.04, 0.22, u);
+        float sizeBoost = (0.65 + 0.35 * crownScale) * (1.0 + rib * 0.6 + pow(u, 3.0) * 0.5 + energyWave * 0.4);
+        gl_PointSize = clamp((118.0 * sizeBoost) / dist, 1.5, 18.0);
+
+        vColor = mix(aColor, vec3(1.0, 0.98, 0.9), energyWave * 0.4);
+        vAlpha = (0.42 + 0.40 * rib + 0.25 * pow(u, 2.0) + energyWave * 0.22) * (0.5 + 0.5 * crownScale) * uBloom;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float core = smoothstep(0.5, 0.12, d);
+        gl_FragColor = vec4(vColor, core * vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const bellPoints = new THREE.Points(bellGeo, bellMat);
+  jellyGroup.add(bellPoints);
+
+  // --- 3. Inner Glowing Oral Arms ---
+  const oralArmCount = 4;
+  const oralPtsPerArm = 220;
+  const oralTotal = oralArmCount * oralPtsPerArm;
+  const oralPos = new Float32Array(oralTotal * 3);
+  const oralCol = new Float32Array(oralTotal * 3);
+  const oralMeta = new Float32Array(oralTotal * 3);
+
+  let oPtr = 0;
+  for (let a = 0; a < oralArmCount; a++) {
+    const baseAng = (a / oralArmCount) * Math.PI * 2 + 0.4;
+    for (let p = 0; p < oralPtsPerArm; p++) {
+      const i3 = oPtr * 3;
+      const u = p / (oralPtsPerArm - 1);
+
+      const c = colGold.clone().lerp(colMagenta, u * 0.85);
+      oralCol[i3] = c.r;
+      oralCol[i3 + 1] = c.g;
+      oralCol[i3 + 2] = c.b;
+
+      oralMeta[i3] = baseAng;
+      oralMeta[i3 + 1] = u;
+      oralMeta[i3 + 2] = (rand() - 0.5) * 0.35;
+      oPtr++;
+    }
+  }
+
+  const oralGeo = new THREE.BufferGeometry();
+  oralGeo.setAttribute('position', new THREE.BufferAttribute(oralPos, 3));
+  oralGeo.setAttribute('aColor', new THREE.BufferAttribute(oralCol, 3));
+  oralGeo.setAttribute('aMeta', new THREE.BufferAttribute(oralMeta, 3));
+
+  const oralMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uBloom: { value: 1 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      attribute vec3 aColor;
+      attribute vec3 aMeta;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float baseAng = aMeta.x;
+        float u = aMeta.y;
+        float jitter = aMeta.z;
+
+        float swimPhase = uTime * 1.65;
+        float lagWave = sin(swimPhase - u * 3.8);
+        float twist = baseAng + u * 5.2 + sin(uTime * 0.85 + u * 2.8) * 0.55;
+        float rad = (0.32 + sin(u * 7.5) * 0.22 + u * 0.42) * (1.0 + 0.14 * lagWave) + jitter * u;
+
+        float y = (1.65 - u * 9.2 + lagWave * 0.38 * u) * uBloom;
+        float swayX = sin(uTime * 1.05 - u * 2.8) * 0.72 * u;
+        float swayZ = cos(uTime * 0.92 - u * 2.6) * 0.72 * u;
+
+        vec3 pos = vec3(cos(twist) * rad + swayX, y, sin(twist) * rad + swayZ);
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float dist = max(-mvPosition.z, 1.0);
+        float pulseTravel = pow(0.5 + 0.5 * sin(uTime * 3.2 - u * 9.0), 4.0);
+        gl_PointSize = clamp(((1.22 - u * 0.42 + pulseTravel * 0.5) * 126.0) / dist, 1.6, 19.0);
+
+        vColor = mix(aColor, vec3(1.0, 0.98, 0.88), (1.0 - u) * 0.35 + pulseTravel * 0.45);
+        vAlpha = (1.0 - pow(u, 1.6)) * (0.78 + pulseTravel * 0.22) * uBloom;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float core = smoothstep(0.5, 0.12, d);
+        gl_FragColor = vec4(vColor, core * vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const oralPoints = new THREE.Points(oralGeo, oralMat);
+  jellyGroup.add(oralPoints);
+
+  // --- 4. 28 Trailing Marginal Tentacles ---
+  const tentacleCount = 28;
+  const ptsPerTentacle = 135;
+  const tentacleTotal = tentacleCount * ptsPerTentacle;
+
+  const tentPos = new Float32Array(tentacleTotal * 3);
+  const tentCol = new Float32Array(tentacleTotal * 3);
+  const tentMeta = new Float32Array(tentacleTotal * 3);
+
+  let tPtr = 0;
+  for (let tIdx = 0; tIdx < tentacleCount; tIdx++) {
+    const theta = (tIdx / tentacleCount) * Math.PI * 2;
+    const lenFactor = 0.80 + (tIdx % 5) * 0.12;
+    for (let p = 0; p < ptsPerTentacle; p++) {
+      const i3 = tPtr * 3;
+      const u = p / (ptsPerTentacle - 1);
+
+      const c = u < 0.45
+        ? colCyan.clone().lerp(colMagenta, u / 0.45)
+        : colMagenta.clone().lerp(colGold, (u - 0.45) / 0.55);
+
+      tentCol[i3] = c.r;
+      tentCol[i3 + 1] = c.g;
+      tentCol[i3 + 2] = c.b;
+
+      tentMeta[i3] = theta;
+      tentMeta[i3 + 1] = u;
+      tentMeta[i3 + 2] = lenFactor;
+      tPtr++;
+    }
+  }
+
+  const tentGeo = new THREE.BufferGeometry();
+  tentGeo.setAttribute('position', new THREE.BufferAttribute(tentPos, 3));
+  tentGeo.setAttribute('aColor', new THREE.BufferAttribute(tentCol, 3));
+  tentGeo.setAttribute('aMeta', new THREE.BufferAttribute(tentMeta, 3));
+
+  const tentMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uBloom: { value: 1 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      attribute vec3 aColor;
+      attribute vec3 aMeta;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float theta = aMeta.x;
+        float u = aMeta.y;
+        float lenFactor = aMeta.z;
+
+        float swimPhase = uTime * 1.65;
+        float rimPulse = sin(swimPhase - 1.55) + 0.32 * sin(swimPhase * 2.0 - 2.3);
+        float rimR = 4.38 * (1.0 + rimPulse * 0.21) * (1.0 + 0.06 * cos(theta * 16.0));
+
+        float rad = mix(rimR, rimR * 0.46, pow(u, 0.72)) + sin(u * 5.5 - swimPhase + theta) * 0.38 * u;
+        float twistAng = theta + sin(u * 3.2 - uTime * 0.75 + theta) * 0.24 * u;
+
+        float yStart = 1.55;
+        float y = (yStart - u * 11.8 * lenFactor + sin(swimPhase - u * 4.2) * 0.28 * u) * uBloom;
+
+        float driftX = sin(uTime * 0.85 - u * 2.4) * 0.95 * pow(u, 1.35);
+        float driftZ = cos(uTime * 0.78 - u * 2.2) * 0.95 * pow(u, 1.35);
+
+        vec3 pos = vec3(cos(twistAng) * rad + driftX, y, sin(twistAng) * rad + driftZ);
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float dist = max(-mvPosition.z, 1.0);
+        float bioPulse = pow(0.5 + 0.5 * sin(u * 10.0 - uTime * 3.2 + theta * 2.0), 4.0);
+        gl_PointSize = clamp(((1.05 - u * 0.45 + bioPulse * 0.65) * 102.0) / dist, 1.3, 15.0);
+
+        vColor = mix(aColor, vec3(1.0, 0.98, 0.9), bioPulse * 0.55);
+        vAlpha = (1.0 - pow(u, 1.45)) * (0.72 + bioPulse * 0.28) * uBloom;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float core = smoothstep(0.5, 0.14, d);
+        gl_FragColor = vec4(vColor, core * vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const tentPoints = new THREE.Points(tentGeo, tentMat);
+  jellyGroup.add(tentPoints);
+
+  // --- 5. Propulsion Vortex Bubble Rings ---
+  const vortexRingCount = 4;
+  const ptsPerVortex = 150;
+  const vortexTotal = vortexRingCount * ptsPerVortex;
+  const vortexPos = new Float32Array(vortexTotal * 3);
+  const vortexCol = new Float32Array(vortexTotal * 3);
+  const vortexMeta = new Float32Array(vortexTotal * 3);
+
+  let vPtr = 0;
+  for (let r = 0; r < vortexRingCount; r++) {
+    for (let p = 0; p < ptsPerVortex; p++) {
+      const i3 = vPtr * 3;
+      const theta = (p / ptsPerVortex) * Math.PI * 2;
+      const c = r % 2 === 0 ? colCyan : colGold;
+
+      vortexCol[i3] = c.r;
+      vortexCol[i3 + 1] = c.g;
+      vortexCol[i3 + 2] = c.b;
+
+      vortexMeta[i3] = r / vortexRingCount;
+      vortexMeta[i3 + 1] = theta;
+      vortexMeta[i3 + 2] = (rand() - 0.5) * 0.35;
+      vPtr++;
+    }
+  }
+
+  const vortexGeo = new THREE.BufferGeometry();
+  vortexGeo.setAttribute('position', new THREE.BufferAttribute(vortexPos, 3));
+  vortexGeo.setAttribute('aColor', new THREE.BufferAttribute(vortexCol, 3));
+  vortexGeo.setAttribute('aMeta', new THREE.BufferAttribute(vortexMeta, 3));
+
+  const vortexMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uBloom: { value: 1 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uBloom;
+      attribute vec3 aColor;
+      attribute vec3 aMeta;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float offset = aMeta.x;
+        float theta = aMeta.y;
+        float jitter = aMeta.z;
+
+        float age = fract(uTime * 0.2626 + offset);
+        float rad = (3.4 + age * 4.2) + jitter + sin(theta * 6.0 + uTime * 1.5) * 0.16 * age;
+        float y = (1.3 - age * 11.5) * uBloom;
+
+        vec3 pos = vec3(cos(theta) * rad, y, sin(theta) * rad);
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float dist = max(-mvPosition.z, 1.0);
+        gl_PointSize = clamp(((1.0 - age * 0.4) * 90.0) / dist, 1.1, 12.0);
+
+        float env = smoothstep(0.0, 0.22, age) * smoothstep(1.0, 0.45, age);
+        vColor = aColor;
+        vAlpha = env * 0.48 * uBloom;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float core = smoothstep(0.5, 0.15, d);
+        gl_FragColor = vec4(vColor, core * vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const vortexPoints = new THREE.Points(vortexGeo, vortexMat);
+  jellyGroup.add(vortexPoints);
+
+  // --- 6. Feather-Soft Deep-Sea God-Rays ---
+  const rayGroup = new THREE.Group();
+  scene.add(rayGroup);
+
+  const rayCount = 7;
+  const rayMaterials = [];
+  for (let i = 0; i < rayCount; i++) {
+    const rayW = 5.5 + (i % 3) * 2.0;
+    const rayH = 48.0;
+    const rayGeo = new THREE.PlaneGeometry(rayW, rayH);
+    const rayMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uPhase: { value: i * 1.15 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uPhase;
+        varying vec2 vUv;
+
+        void main() {
+          float dx = (vUv.x - 0.5) * 2.0;
+          float horiz = exp(-dx * dx * 4.5) * smoothstep(1.0, 0.7, abs(dx));
+          float vert = smoothstep(0.05, 0.65, vUv.y) * smoothstep(0.98, 0.72, vUv.y);
+          float shimmer = 0.65 + 0.35 * sin(uTime * 0.7 + uPhase);
+
+          vec3 rayCol = mix(vec3(0.0, 0.78, 1.0), vec3(1.0, 0.85, 0.55), 0.35);
+          float alpha = horiz * vert * shimmer * 0.08;
+          if (alpha <= 0.001) discard;
+
+          gl_FragColor = vec4(rayCol, alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide
+    });
+
+    const rayMesh = new THREE.Mesh(rayGeo, rayMat);
+    rayMesh.position.set((i - 3) * 3.6, 2.0, -9.0 - (i % 3) * 3.5);
+    rayMesh.rotation.z = -0.16 + (i % 2) * 0.04;
+    rayMesh.rotation.y = (i - 3) * 0.22;
+    rayGroup.add(rayMesh);
+    rayMaterials.push(rayMat);
+  }
+
+  // --- 7. Floating Bioluminescent Plankton & Glowing Spores ---
+  const planktonCount = 950;
+  const plankPos = new Float32Array(planktonCount * 3);
+  const plankCol = new Float32Array(planktonCount * 3);
+  const plankMeta = new Float32Array(planktonCount * 2);
+
+  for (let i = 0; i < planktonCount; i++) {
+    const i3 = i * 3;
+    const i2 = i * 2;
+    plankPos[i3] = (rand() - 0.5) * 36;
+    plankPos[i3 + 1] = (rand() - 0.5) * 44;
+    plankPos[i3 + 2] = (rand() - 0.5) * 36;
+
+    const c = i % 3 === 0 ? colCyan : (i % 4 === 0 ? colGold : colMagenta);
+    plankCol[i3] = c.r;
+    plankCol[i3 + 1] = c.g;
+    plankCol[i3 + 2] = c.b;
+
+    plankMeta[i2] = 0.4 + rand() * 0.9;
+    plankMeta[i2 + 1] = rand() * Math.PI * 2;
+  }
+
+  const plankGeo = new THREE.BufferGeometry();
+  plankGeo.setAttribute('position', new THREE.BufferAttribute(plankPos, 3));
+  plankGeo.setAttribute('aColor', new THREE.BufferAttribute(plankCol, 3));
+  plankGeo.setAttribute('aMeta', new THREE.BufferAttribute(plankMeta, 2));
+
+  const plankMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }
+    },
+    vertexShader: `
+      uniform float uTime;
+      attribute vec3 aColor;
+      attribute vec2 aMeta;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float speed = aMeta.x;
+        float phase = aMeta.y;
+
+        vec3 pos = position;
+        pos.y = mod(pos.y - uTime * speed * 1.25 + 22.0, 44.0) - 22.0;
+        pos.x += sin(uTime * 0.55 + phase) * 0.55;
+        pos.z += cos(uTime * 0.48 + phase) * 0.55;
+
+        float yNorm = abs(pos.y) / 22.0;
+        float boundFade = smoothstep(1.0, 0.82, yNorm);
+
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float dist = max(-mvPosition.z, 1.0);
+        gl_PointSize = clamp((92.0 * speed) / dist, 1.2, 11.0);
+
+        float twinkle = 0.38 + 0.62 * sin(uTime * 2.2 + phase);
+        vColor = aColor;
+        vAlpha = twinkle * 0.58 * boundFade;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float core = smoothstep(0.5, 0.14, d);
+        gl_FragColor = vec4(vColor, core * vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const plankField = new THREE.Points(plankGeo, plankMat);
+  scene.add(plankField);
+
+  // --- 8. Optional Recorder ('R' to start/stop, 'Space' to reset) ---
+  let elapsed = 0;
+  let lastNow = performance.now();
+  let isRecording = false;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+
+  function resetAnimation() {
+    elapsed = 0;
+    lastNow = performance.now();
+  }
+
+  function startRecording() {
+    if (isRecording) return;
+    resetAnimation();
+    recordedChunks = [];
+
+    const stream = renderer.domElement.captureStream(TARGET_FPS);
+    const mimeTypes = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+    const ext = selectedMime.includes('mp4') ? 'mp4' : 'webm';
+
+    try {
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: selectedMime || undefined,
+        videoBitsPerSecond: 14000000
+      });
+    } catch (e) {
+      mediaRecorder = new MediaRecorder(stream);
+    }
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: selectedMime || 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Cosmic-Jellyfish.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      isRecording = false;
+    };
+
+    isRecording = true;
+    mediaRecorder.start(100);
+  }
+
+  function stopRecording() {
+    if (!isRecording) return;
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    isRecording = false;
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyR') {
+      if (!isRecording) startRecording();
+      else stopRecording();
+    }
+    if (e.code === 'Space' && !isRecording) resetAnimation();
+  });
+
+  // --- 9. Seamless Endless Render Loop ---
+  function animate(now) {
+    requestAnimationFrame(animate);
+    const delta = Math.min((now - lastNow) / 1000, 0.05);
+    lastNow = now;
+    elapsed += delta;
+
+    const t = elapsed;
+    const bloom = smootherstep(Math.min(t, 2.2) / 2.2);
+
+    membraneMat.uniforms.uTime.value = t;
+    membraneMat.uniforms.uBloom.value = bloom;
+
+    bellMat.uniforms.uTime.value = t;
+    bellMat.uniforms.uBloom.value = bloom;
+
+    oralMat.uniforms.uTime.value = t;
+    oralMat.uniforms.uBloom.value = bloom;
+
+    tentMat.uniforms.uTime.value = t;
+    tentMat.uniforms.uBloom.value = bloom;
+
+    vortexMat.uniforms.uTime.value = t;
+    vortexMat.uniforms.uBloom.value = bloom;
+
+    plankMat.uniforms.uTime.value = t;
+
+    for (let i = 0; i < rayMaterials.length; i++) {
+      rayMaterials[i].uniforms.uTime.value = t;
+    }
+
+    const swimBob = Math.sin(t * 1.65 - 0.85) * 0.42;
+    jellyGroup.position.y = 1.35 + swimBob;
+    jellyGroup.rotation.y = t * 0.15;
+
+    // Smooth continuous periodic camera orbit & zoom wave
+    const cyclePhase = (t / CYCLE_DURATION) * Math.PI * 2;
+    const camY = 1.2 + Math.sin(cyclePhase) * 3.2;
+    const camRadius = 15.0 + Math.cos(cyclePhase) * 3.8;
+    const lookY = 0.6 + Math.sin(cyclePhase) * 0.9;
+
+    const camAngle = t * 0.14;
+    camera.position.set(
+      Math.sin(camAngle) * camRadius,
+      camY,
+      Math.cos(camAngle) * camRadius
+    );
+    camera.lookAt(0, lookY, 0);
+    rayGroup.rotation.y = camAngle * 0.45;
+
+    renderer.render(scene, camera);
+  }
+
+  requestAnimationFrame(animate);
+</script>
+</body>
+</html>
